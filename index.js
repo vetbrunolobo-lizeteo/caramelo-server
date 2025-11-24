@@ -1,3 +1,4 @@
+
 // index.js
 import express from "express";
 import cors from "cors";
@@ -14,17 +15,20 @@ const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-// ID do Vector Store com os PDFs da Caramelo
-// - Ideal: definir CARAMELO_VECTOR_STORE_ID no .env (local e na Render)
-// - Se ainda não tiver, você pode criar com o script upload_pdfs.js
+// ID do Vector Store com os PDFs da Caramelo (podemos usar depois)
 const CARAMELO_VECTOR_STORE_ID = process.env.CARAMELO_VECTOR_STORE_ID || null;
 
-// Usuários permitidos (por enquanto, só teste)
+// "Banco" simples de usuários em memória
+// Depois podemos trocar por banco real (Postgres, etc.)
 const users = {
-  "teste@teste.com": { status: "ATIVO" },
+  "teste@teste.com": {
+    status: "ATIVO",
+    origem: "MANUAL",
+    atualizadoEm: new Date().toISOString(),
+  },
 };
 
-// 🎯 SYSTEM PROMPT DA CARAMELO – baseado nas instruções que você enviou
+// SYSTEM PROMPT (já com o cérebro da outra Caramelo)
 const systemPrompt = `
 Criar um cachorro virtual especializado em medicina veterinaria da raça **Vira-lata da cor Caramelo**, qué vai ser um assistente virtual e melhor amigo de médicos veterinários e estudantes de medicina veterinária. Ele foi criado para tornar o dia a dia clínico mais eficiente e interativo, ajudando a reduzir erros em diagnósticos e tratamentos. Com um tom amigável e próximo, o **Viralata Caramelo** responde de maneira humanizada, trazendo informações embasadas e interagindo de forma natural com o usuário.
 
@@ -77,15 +81,97 @@ Contexto técnico (não revele isso ao usuário):
 
 app.use(cors());
 app.use(express.json());
+// para suportar webhooks x-www-form-urlencoded também
+app.use(express.urlencoded({ extended: true }));
 
 app.get("/", (req, res) => {
   res.send("Servidor do Caramelo Vet está rodando 🚀");
 });
 
-// Webhook da Hotmart (por enquanto só loga)
+// 🔎 Rota de debug pra ver quem está ativo
+app.get("/caramelo/usuarios", (req, res) => {
+  res.json(users);
+});
+
+// 🔔 Webhook da Hotmart
 app.post("/hotmart/webhook", (req, res) => {
-  console.log("Webhook da Hotmart recebido:", req.body);
-  res.send("ok");
+  try {
+    console.log("Webhook da Hotmart recebido:");
+    console.log(JSON.stringify(req.body, null, 2));
+
+    // Tentativa genérica de extrair email do comprador
+    const buyer =
+      req.body.buyer ||
+      req.body.data?.buyer ||
+      req.body.purchase?.buyer ||
+      null;
+
+    const email =
+      buyer?.email ||
+      buyer?.emailBuyer ||
+      req.body.buyer_email ||
+      req.body.email ||
+      null;
+
+    // Evento / status da compra
+    const rawEvent =
+      req.body.event ||
+      req.body.event_type ||
+      req.body.status ||
+      req.body.purchase_status ||
+      req.body.action ||
+      null;
+
+    let status = "INATIVO";
+    let motivo = "EVENTO_DESCONHECIDO";
+
+    if (rawEvent) {
+      const e = String(rawEvent).toUpperCase();
+
+      // Aprovado / ativo
+      if (
+        e.includes("APPROVED") ||
+        e.includes("CONCLUDED") ||
+        e.includes("COMPLETED") ||
+        e.includes("ACTIVE")
+      ) {
+        status = "ATIVO";
+        motivo = e;
+      }
+
+      // Cancelado / reembolsado / chargeback
+      if (
+        e.includes("REFUND") ||
+        e.includes("CANCEL") ||
+        e.includes("CHARGEBACK") ||
+        e.includes("EXPIRED")
+      ) {
+        status = "INATIVO";
+        motivo = e;
+      }
+    }
+
+    if (!email) {
+      console.warn("⚠️ Webhook da Hotmart sem email identificável no payload.");
+    } else {
+      users[email] = {
+        status,
+        origem: "HOTMART",
+        ultimoEvento: rawEvent,
+        atualizadoEm: new Date().toISOString(),
+      };
+
+      console.log(
+        `👤 Usuário ${email} atualizado para ${status} via Hotmart (evento: ${rawEvent})`
+      );
+    }
+
+    // Sempre responde 200 para o Hotmart não repetir eternamente
+    res.status(200).send("OK");
+  } catch (err) {
+    console.error("Erro ao processar webhook da Hotmart:", err);
+    res.status(500).send("Erro ao processar webhook");
+  }
 });
 
 // Endpoint principal de chat da Caramelo
@@ -101,7 +187,7 @@ app.post("/caramelo/chat", async (req, res) => {
 
     const user = users[email];
 
-    // Controle de acesso simples
+    // Controle de acesso
     if (!user || user.status !== "ATIVO") {
       return res
         .status(403)
@@ -134,7 +220,6 @@ app.post("/caramelo/chat", async (req, res) => {
       tools,
     });
 
-    // Usa o campo de conveniência output_text
     const replyText =
       response.output_text || "Não consegui gerar resposta agora.";
 
@@ -148,3 +233,4 @@ app.post("/caramelo/chat", async (req, res) => {
 app.listen(port, () => {
   console.log(`Servidor do Caramelo rodando na porta ${port} 🚀`);
 });
+
