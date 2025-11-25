@@ -1,11 +1,12 @@
 // ===============================
 //  SERVIDOR CARAMELO VET - INDEX
+//  Versão ES Module (type: "module")
 // ===============================
 
-require('dotenv').config();
-const express = require('express');
-const cors = require('cors');
-const axios = require('axios');
+import 'dotenv/config';
+import express from 'express';
+import cors from 'cors';
+import axios from 'axios';
 
 const app = express();
 
@@ -126,4 +127,5 @@ app.post('/caramelo/chat', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`🚀 Servidor do Caramelo rodando na porta ${PORT}`);
 });
+
 
