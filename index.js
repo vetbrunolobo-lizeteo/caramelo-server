@@ -6,7 +6,6 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
-import axios from 'axios';
 
 const app = express();
 
@@ -92,29 +91,40 @@ app.post('/caramelo/chat', async (req, res) => {
 
     messages.push({ role: 'user', content: message });
 
-    // Chamada para a API da OpenAI (chat)
-    const response = await axios.post(
-      'https://api.openai.com/v1/chat/completions',
-      {
+    // ================================
+    // CHAMADA PARA A API DA OPENAI VIA FETCH
+    // ================================
+    const openaiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
         model: 'gpt-4.1-mini',
         messages,
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-        },
-      }
-    );
+      }),
+    });
+
+    if (!openaiResponse.ok) {
+      const errorText = await openaiResponse.text();
+      console.error('❌ Erro na resposta da OpenAI:', openaiResponse.status, errorText);
+      return res.status(500).json({
+        error: 'Erro na comunicação com a OpenAI.',
+        status: openaiResponse.status,
+      });
+    }
+
+    const data = await openaiResponse.json();
 
     const answer =
-      response.data?.choices?.[0]?.message?.content ||
+      data?.choices?.[0]?.message?.content ||
       'Não consegui gerar uma resposta agora. Tente novamente em alguns instantes.';
 
     return res.json({ answer });
   } catch (error) {
     console.error('❌ Erro na rota /caramelo/chat:');
-    console.error(error.response?.data || error.message);
+    console.error(error);
     return res.status(500).json({
       error: 'Erro ao processar a resposta do Caramelo.',
     });
@@ -127,6 +137,7 @@ app.post('/caramelo/chat', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`🚀 Servidor do Caramelo rodando na porta ${PORT}`);
 });
+
 
 
 
