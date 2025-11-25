@@ -1,142 +1,129 @@
-import express from "express";
-import cors from "cors";
-import dotenv from "dotenv";
-import OpenAI from "openai";
+// ===============================
+//  SERVIDOR CARAMELO VET - INDEX
+// ===============================
 
-dotenv.config();
+require('dotenv').config();
+const express = require('express');
+const cors = require('cors');
+const axios = require('axios');
 
 const app = express();
-const port = process.env.PORT || 3000;
 
-// 🟠 MIDDLEWARES
+// A porta vem do Render (PORT) ou cai na 10000 em ambiente local
+const PORT = process.env.PORT || 10000;
+
+// ========================
+// MIDDLEWARES BÁSICOS
+// ========================
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// serve arquivos estáticos (HTML, CSS, JS) da pasta "public"
-// aqui deve estar o caramelo-chat.html
-app.use(express.static("public"));
-
-// 🟠 CLIENTE OPENAI (Caramelo)
-const client = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
+// ========================
+// ROTA RAIZ (TESTE RÁPIDO)
+// ========================
+app.get('/', (req, res) => {
+  res.send('Servidor Caramelo Vet online 🐶🧡');
 });
 
-// 🟠 USUÁRIOS ATIVOS (por enquanto em memória)
-const users = {
-  "teste@teste.com": { status: "ATIVO" },
-};
+// ========================
+// ROTA WEBHOOK HOTMART
+// ========================
+app.post('/hotmart/webhook', (req, res) => {
+  console.log('🔥 Webhook recebido da Hotmart!');
+  console.log('Headers:', JSON.stringify(req.headers, null, 2));
+  console.log('Body:', JSON.stringify(req.body, null, 2));
 
-// 🟠 SYSTEM PROMPT DA CARAMELO
-const systemPrompt = `
-Você é o Caramelo Vet, um cachorro vira-lata caramelo virtual, assistente de médicos-veterinários e estudantes de medicina veterinária, com foco em clínica e cirurgia de pequenos animais.
-
-Tonalidade:
-- Amigável, próxima, acolhedora e respeitosa.
-- Fale sempre em português do Brasil.
-- Use linguagem clara, objetiva e didática, mas mantendo base técnica.
-
-Regras importantes:
-- Você NÃO realiza diagnósticos definitivos.
-- Sempre que o usuário pedir um diagnóstico, responda obrigatoriamente:
-  "Eu não realizo diagnósticos. Meu papel é auxiliar correlacionando as informações fornecidas pelo meu banco de dados com base na literatura veterinária, trazendo possíveis condutas clínicas e diagnósticos diferenciais. Para um diagnóstico definitivo, consulte um médico veterinário."
-- Seu papel é:
-  - Ajudar a organizar o raciocínio clínico.
-  - Sugerir diagnósticos diferenciais.
-  - Sugerir exames complementares.
-  - Apontar condutas possíveis com base na literatura veterinária.
-- Você NÃO substitui exame físico, exames complementares ou o julgamento clínico do médico-veterinário.
-- Sempre que houver risco de gravidade, oriente procurar atendimento presencial imediato.
-
-Conteúdo:
-- Baseie-se sempre em medicina veterinária baseada em evidências, diretrizes WSAVA, Anclivepa e literatura moderna.
-- Quando possível, cite a literatura ou tipo de referência (por exemplo: diretrizes WSAVA, protocolos cirúrgicos, oncologia, etc.).
-- Se faltar informação clínica, peça os dados essenciais: espécie, raça, idade, sexo, peso, queixa principal, sinais clínicos, tempo de evolução, exames feitos.
-
-Restrições:
-- Não prescreva fármacos com doses exatas sem considerar espécie, peso, comorbidades e uso concomitante de outros medicamentos.
-- Não faça promessas de cura.
-- Não forneça opinião que vá contra o bom senso ético ou a legislação veterinária.
-
-Objetivo:
-- Ser o melhor amigo virtual do médico-veterinário, ajudando a reduzir erros, organizar a linha de pensamento e dar segurança nas decisões, sem substituir o profissional.
-`;
-
-// 🟢 ROTA BASE – TESTE RÁPIDO
-app.get("/", (req, res) => {
-  res.send("Servidor Caramelo Vet está rodando 🚀");
-});
-
-// 🟢 WEBHOOK HOTMART – GET (teste no navegador)
-app.get("/hotmart/webhook", (req, res) => {
-  res.send("Webhook do Hotmart do Caramelo está ativo (GET).");
-});
-
-// 🟠 WEBHOOK HOTMART – POST (por enquanto só loga)
-app.post("/hotmart/webhook", (req, res) => {
-  console.log("📩 Webhook recebido da Hotmart:");
-  console.log(JSON.stringify(req.body, null, 2));
-
-  // Aqui no futuro vamos:
-  // - Ler o email do comprador
-  // - Interpretar o evento (aprovado, cancelado, reembolso)
-  // - Atualizar users[email] = { status: "ATIVO" ou "INATIVO" }
-
-  res.send("OK");
-});
-
-// 🟣 ENDPOINT PRINCIPAL DE CHAT DO CARAMELO
-app.post("/caramelo/chat", async (req, res) => {
   try {
-    const { email, message } = req.body;
+    const event =
+      req.body.event ||
+      req.body.status ||
+      req.body.event_name ||
+      req.body?.data?.status;
 
-    if (!email || !message) {
-      return res
-        .status(400)
-        .json({ error: "Email e mensagem são obrigatórios." });
+    const buyerEmail =
+      req.body?.data?.buyer?.email ||
+      req.body?.data?.checkout_email ||
+      req.body?.buyer?.email;
+
+    console.log('Evento detectado:', event);
+    console.log('E-mail do comprador:', buyerEmail);
+  } catch (err) {
+    console.log('Erro ao interpretar dados do webhook:', err.message);
+  }
+
+  // Sempre responde 200 para a Hotmart não repetir o envio
+  return res.status(200).json({ ok: true });
+});
+
+// ========================
+// ROTA DO CHAT DO CARAMELO
+// ========================
+app.post('/caramelo/chat', async (req, res) => {
+  try {
+    const { message, history } = req.body;
+
+    if (!message) {
+      return res.status(400).json({ error: 'Mensagem é obrigatória.' });
     }
 
-    const user = users[email];
+    const apiKey = process.env.OPENAI_API_KEY;
 
-    // Controle simples de acesso
-    if (!user || user.status !== "ATIVO") {
-      return res
-        .status(403)
-        .json({ error: "Seu acesso ao Caramelo não está ativo." });
+    if (!apiKey) {
+      console.error('❌ ERRO: OPENAI_API_KEY não configurada nas variáveis de ambiente.');
+      return res.status(500).json({
+        error: 'OPENAI_API_KEY não configurada no servidor.',
+      });
     }
 
-    // Chamada à OpenAI
-    const response = await client.responses.create({
-      model: "gpt-4.1-mini",
-      input: [
-        {
-          role: "system",
-          content: systemPrompt,
-        },
-        {
-          role: "user",
-          content: message,
-        },
-      ],
-    });
+    // Monta o contexto da conversa
+    const messages = [
+      {
+        role: 'system',
+        content:
+          'Você é o Caramelo Vet, o melhor amigo virtual do médico veterinário. Especializado em cirurgia de tecidos moles, ortopedia e rotina de clínica médica de cães e gatos. Responda com base em literatura atual, de forma prática, objetiva, sempre lembrando riscos, limitações do atendimento à distância e a necessidade de exame físico completo.',
+      },
+    ];
 
-    // Mesma lógica que já funcionou antes:
-    const outputItem = response.output[0];
-    const textPart = outputItem.content.find(
-      (part) => part.type === "output_text"
+    if (Array.isArray(history)) {
+      messages.push(...history);
+    }
+
+    messages.push({ role: 'user', content: message });
+
+    // Chamada para a API da OpenAI (chat)
+    const response = await axios.post(
+      'https://api.openai.com/v1/chat/completions',
+      {
+        model: 'gpt-4.1-mini',
+        messages,
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+      }
     );
-    const replyText = textPart
-      ? textPart.text
-      : "Não consegui gerar resposta agora.";
 
-    res.json({ reply: replyText });
+    const answer =
+      response.data?.choices?.[0]?.message?.content ||
+      'Não consegui gerar uma resposta agora. Tente novamente em alguns instantes.';
+
+    return res.json({ answer });
   } catch (error) {
-    console.error("❌ Erro no /caramelo/chat:", error);
-    res.status(500).json({ error: "Erro interno ao falar com o Caramelo." });
+    console.error('❌ Erro na rota /caramelo/chat:');
+    console.error(error.response?.data || error.message);
+    return res.status(500).json({
+      error: 'Erro ao processar a resposta do Caramelo.',
+    });
   }
 });
 
-// 🟢 INICIALIZA O SERVIDOR
-app.listen(port, () => {
-  console.log(`🚀 Servidor do Caramelo rodando na porta ${port}`);
+// ========================
+// INICIA O SERVIDOR
+// ========================
+app.listen(PORT, () => {
+  console.log(`🚀 Servidor do Caramelo rodando na porta ${PORT}`);
 });
+
